@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.dropboxignore
+.DS_Store
+*.local
