@@ -7,10 +7,19 @@ import { QUEST_COLOURS } from './constants/questColours';
 
 const QUEST_CODES = Object.keys(QUEST_COLOURS).filter(k => k !== 'BBH');
 
-function FinishRouteForm({ onSave, onCancel }) {
+function FinishRouteForm({ onSave, onCancel, routes = [] }) {
   const [name, setName] = useState('');
   const [questCode, setQuestCode] = useState('');
   const canSave = name.trim().length > 0 && questCode.length > 0;
+
+  const handleQuestChange = (e) => {
+    const code = e.target.value;
+    setQuestCode(code);
+    if (code) {
+      const count = routes.filter(r => r.questCode === code).length;
+      setName(`${code} Route ${count + 1}`);
+    }
+  };
 
   const inputStyle = {
     width: '100%', boxSizing: 'border-box',
@@ -49,7 +58,7 @@ function FinishRouteForm({ onSave, onCancel }) {
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && canSave) onSave(name.trim(), questCode); }}
-            placeholder="e.g. VPQ Morning Route v1"
+            placeholder="e.g. VePQ Route 1"
             style={inputStyle}
           />
         </div>
@@ -58,7 +67,7 @@ function FinishRouteForm({ onSave, onCancel }) {
           <label style={labelStyle}>Quest</label>
           <select
             value={questCode}
-            onChange={e => setQuestCode(e.target.value)}
+            onChange={handleQuestChange}
             style={{ ...inputStyle, cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
           >
             <option value="" style={{ background: '#2a0118' }}>Select a Quest…</option>
@@ -350,6 +359,7 @@ export default function App() {
         <FinishRouteForm
           onSave={handleFinishRouteSave}
           onCancel={handleCancelDraw}
+          routes={routes}
         />
       )}
     </div>

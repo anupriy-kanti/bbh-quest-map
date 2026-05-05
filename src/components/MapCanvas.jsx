@@ -311,7 +311,7 @@ export default function MapCanvas({
                 <polyline
                   points={pointsStr}
                   stroke={route.colour}
-                  strokeWidth={4 / scale}
+                  strokeWidth={6 / scale}
                   fill="none"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -346,7 +346,7 @@ export default function MapCanvas({
                 {coords.length >= 2 && (
                   <polyline
                     points={coords.map(c => `${c.cx},${c.cy}`).join(' ')}
-                    stroke="#f5d2c1"
+                    stroke="#420424"
                     strokeWidth={3 / scale}
                     fill="none"
                     opacity={0.65}
@@ -359,7 +359,7 @@ export default function MapCanvas({
                     key={i}
                     cx={c.cx} cy={c.cy}
                     r={4 / scale}
-                    fill="#f5d2c1"
+                    fill="#420424"
                     opacity={0.8}
                   />
                 ))}
