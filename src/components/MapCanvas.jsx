@@ -2,6 +2,13 @@ import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } fr
 import baseMap from '../assets/lalbagh_base.png';
 import { MAP_CONFIG } from '../constants/mapConfig';
 
+function pointToSegmentDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  if (dx === 0 && dy === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
 function getNodeCoords(node, spotsById) {
   if (node.nodeType === 'spot') {
     const spot = spotsById[node.spotId];
@@ -36,7 +43,10 @@ export default function MapCanvas({
   drawMode = false,
   onMapClick,
   onPinClick,
+  onRouteClick,
+  onRouteDeselect,
   selectedSpotId,
+  selectedRouteId,
   showLabels,
   movingSpotId,
   onMoveConfirm,
@@ -57,6 +67,12 @@ export default function MapCanvas({
   const waypointDragRef    = useRef({ active: false, routeId: null, nodeIndex: null });
   const liveWaypointPosRef = useRef(null);
   const [liveWaypointPos, setLiveWaypointPos] = useState(null);
+
+  const routesRef          = useRef(routes);
+  const spotsByIdRef       = useRef({});
+  const selectedRouteIdRef = useRef(selectedRouteId);
+  useEffect(() => { routesRef.current = routes; }, [routes]);
+  useEffect(() => { selectedRouteIdRef.current = selectedRouteId; }, [selectedRouteId]);
 
   // ── Fit-to-viewport on mount ───────────────────────────────────────────────
 
@@ -171,13 +187,47 @@ export default function MapCanvas({
       return;
     }
 
-    // Normal mode
+    // Pin click — works in draw mode too
     if (pinEl) {
       onPinClick?.(pinEl.dataset.spotId);
-    } else if (inBounds) {
-      onMapClick?.(lng, lat);
+      return;
     }
-  }, [onMapClick, onPinClick, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd]);
+
+    if (!inBounds) return;
+
+    // Draw mode — add waypoint
+    if (drawMode) {
+      onMapClick?.(lng, lat);
+      return;
+    }
+
+    // Normal mode — hit-test route polylines
+    const toleranceNatural = 8 / t.scale;
+    let hitRouteId = null;
+    for (const route of routesRef.current) {
+      const coords = route.path
+        .map(n => getNodeCoords(n, spotsByIdRef.current))
+        .filter(Boolean);
+      for (let i = 0; i < coords.length - 1; i++) {
+        const d = pointToSegmentDist(
+          naturalX, naturalY,
+          coords[i].cx, coords[i].cy,
+          coords[i + 1].cx, coords[i + 1].cy,
+        );
+        if (d <= toleranceNatural) { hitRouteId = route.routeId; break; }
+      }
+      if (hitRouteId) break;
+    }
+
+    if (hitRouteId) {
+      onRouteClick?.(hitRouteId);
+    } else {
+      onRouteDeselect?.();
+      if (!selectedRouteIdRef.current) {
+        onMapClick?.(lng, lat);
+      }
+    }
+  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, drawMode]);
 
   // ── Zoom ───────────────────────────────────────────────────────────────────
 
@@ -225,10 +275,11 @@ export default function MapCanvas({
   const pinFS    = PIN_FONT_SIZE / scale;
   const labelGap = PIN_LABEL_GAP / scale;
 
-  const spotsById = useMemo(
-    () => Object.fromEntries(spots.map(s => [s.spotId, s])),
-    [spots],
-  );
+  const spotsById = useMemo(() => {
+    const map = Object.fromEntries(spots.map(s => [s.spotId, s]));
+    spotsByIdRef.current = map;
+    return map;
+  }, [spots]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -287,6 +338,10 @@ export default function MapCanvas({
 
           {/* ── Saved routes ──────────────────────────────────────────── */}
           {routes.map(route => {
+            const isRouteSelected = route.routeId === selectedRouteId;
+            const strokeW = (isRouteSelected ? 8 : 6) / scale;
+            const dotR    = (isRouteSelected ? 12 : 6) / scale;
+
             const coordsWithIdx = route.path.map((node, i) => {
               let c;
               if (
@@ -311,7 +366,7 @@ export default function MapCanvas({
                 <polyline
                   points={pointsStr}
                   stroke={route.colour}
-                  strokeWidth={6 / scale}
+                  strokeWidth={strokeW}
                   fill="none"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -322,7 +377,7 @@ export default function MapCanvas({
                     <circle
                       key={i}
                       cx={c.cx} cy={c.cy}
-                      r={6 / scale}
+                      r={dotR}
                       fill={route.colour}
                       stroke="#f5d2c1"
                       strokeWidth={1.5 / scale}

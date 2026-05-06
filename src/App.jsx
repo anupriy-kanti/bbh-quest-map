@@ -137,17 +137,19 @@ function makeBlankSpot(lng, lat) {
 }
 
 export default function App() {
-  const [spots,          setSpots]          = useState(() => loadData().spots ?? []);
-  const [routes,         setRoutes]         = useState(() => loadData().routes ?? []);
-  const [selectedSpotId, setSelectedSpotId] = useState(null);
-  const [drafts,         setDrafts]         = useState({});
-  const [movingSpotId,   setMovingSpotId]   = useState(null);
-  const [showLabels,     setShowLabels]     = useState(true);
-  const [drawMode,       setDrawMode]       = useState(false);
-  const [draftPath,      setDraftPath]      = useState([]);
-  const [showFinishForm, setShowFinishForm] = useState(false);
+  const [spots,           setSpots]           = useState(() => loadData().spots ?? []);
+  const [routes,          setRoutes]          = useState(() => loadData().routes ?? []);
+  const [selectedSpotId,  setSelectedSpotId]  = useState(null);
+  const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [drafts,          setDrafts]          = useState({});
+  const [movingSpotId,    setMovingSpotId]    = useState(null);
+  const [showLabels,      setShowLabels]      = useState(true);
+  const [drawMode,        setDrawMode]        = useState(false);
+  const [draftPath,       setDraftPath]       = useState([]);
+  const [showFinishForm,  setShowFinishForm]  = useState(false);
 
-  const selectedSpot = spots.find(s => s.spotId === selectedSpotId) ?? null;
+  const selectedSpot  = spots.find(s => s.spotId === selectedSpotId) ?? null;
+  const selectedRoute = routes.find(r => r.routeId === selectedRouteId) ?? null;
 
   // ── Map interaction ────────────────────────────────────────────────────────
 
@@ -160,6 +162,33 @@ export default function App() {
     setSpots(prev => [...prev, spot]);
     setSelectedSpotId(spot.spotId);
   }, [drawMode]);
+
+  const handleRouteClick = useCallback((routeId) => {
+    setSelectedRouteId(routeId);
+    setSelectedSpotId(null);
+  }, []);
+
+  const handleRouteDeselect = useCallback(() => {
+    setSelectedRouteId(null);
+  }, []);
+
+  const handleSaveRoute = useCallback((updatedRoute) => {
+    setRoutes(prev => {
+      const next = prev.map(r => r.routeId === updatedRoute.routeId ? updatedRoute : r);
+      saveRoutes(next);
+      return next;
+    });
+    setSelectedRouteId(null);
+  }, []);
+
+  const handleDeleteRoute = useCallback((routeId) => {
+    setRoutes(prev => {
+      const next = prev.filter(r => r.routeId !== routeId);
+      saveRoutes(next);
+      return next;
+    });
+    setSelectedRouteId(null);
+  }, []);
 
   const handlePinClick = useCallback((spotId) => {
     if (drawMode) {
@@ -334,7 +363,10 @@ export default function App() {
             drawMode={drawMode}
             onMapClick={handleMapClick}
             onPinClick={handlePinClick}
+            onRouteClick={handleRouteClick}
+            onRouteDeselect={handleRouteDeselect}
             selectedSpotId={selectedSpotId}
+            selectedRouteId={selectedRouteId}
             showLabels={showLabels}
             movingSpotId={movingSpotId}
             onMoveConfirm={handleMoveConfirm}
@@ -352,6 +384,9 @@ export default function App() {
           draft={drafts[selectedSpotId]}
           onDraftChange={handleDraftChange}
           onMoveStart={handleMoveStart}
+          selectedRoute={selectedRoute}
+          onRouteSave={handleSaveRoute}
+          onRouteDelete={handleDeleteRoute}
         />
       </div>
 

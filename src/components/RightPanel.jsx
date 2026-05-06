@@ -1,4 +1,5 @@
 import MetadataPanel from './MetadataPanel';
+import RoutePanel from './RoutePanel';
 
 // ── Stats view ────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,9 @@ export default function RightPanel({
   draft,
   onDraftChange,
   onMoveStart,
+  selectedRoute,
+  onRouteSave,
+  onRouteDelete,
 }) {
   return (
     <div
@@ -154,6 +158,12 @@ export default function RightPanel({
           draft={draft}
           onDraftChange={onDraftChange}
           onMoveStart={onMoveStart}
+        />
+      ) : selectedRoute ? (
+        <RoutePanel
+          route={selectedRoute}
+          onSave={onRouteSave}
+          onDelete={onRouteDelete}
         />
       ) : (
         <StatsView spots={spots} />
