@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import MapCanvas from './components/MapCanvas';
 import RightPanel from './components/RightPanel';
 import Toolbar from './components/Toolbar';
-import { loadData, saveSpots, saveRoutes } from './utils/storage';
+import { loadData, loadDataFromCloud, saveSpots, saveRoutes, onSyncStatusChange } from './utils/storage';
 import { QUEST_COLOURS } from './constants/questColours';
 
 const QUEST_CODES = Object.keys(QUEST_COLOURS).filter(k => k !== 'BBH');
@@ -139,6 +139,7 @@ function makeBlankSpot(lng, lat) {
 export default function App() {
   const [spots,                  setSpots]                  = useState(() => loadData().spots ?? []);
   const [routes,                 setRoutes]                 = useState(() => loadData().routes ?? []);
+  const [syncStatus,             setSyncStatus]             = useState('idle');
   const [selectedSpotId,         setSelectedSpotId]         = useState(null);
   const [selectedRouteId,        setSelectedRouteId]        = useState(null);
   const [selectedWaypointIndex,  setSelectedWaypointIndex]  = useState(null);
@@ -151,6 +152,19 @@ export default function App() {
 
   const selectedSpot  = spots.find(s => s.spotId === selectedSpotId) ?? null;
   const selectedRoute = routes.find(r => r.routeId === selectedRouteId) ?? null;
+
+  // ── Cloud sync init ────────────────────────────────────────────────────────
+  useEffect(() => {
+    onSyncStatusChange(setSyncStatus);
+
+    loadDataFromCloud().then(cloudData => {
+      if (!cloudData) return;
+      setSpots(cloudData.spots ?? []);
+      setRoutes(cloudData.routes ?? []);
+      // Keep localStorage in sync with cloud truth
+      localStorage.setItem('bbhqmap_data', JSON.stringify(cloudData));
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Map interaction ────────────────────────────────────────────────────────
 
@@ -425,6 +439,7 @@ export default function App() {
         onToggleDrawMode={handleToggleDrawMode}
         onFinishRoute={handleFinishRouteRequest}
         onCancelDraw={handleCancelDraw}
+        syncStatus={syncStatus}
       />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

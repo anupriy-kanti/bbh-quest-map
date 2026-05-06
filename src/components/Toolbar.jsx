@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import bbhLogo from '../assets/bbh_logo.png';
 
 function ToolbarBtn({ onClick, active, disabled, title, children }) {
@@ -30,6 +30,40 @@ function ToolbarBtn({ onClick, active, disabled, title, children }) {
     >
       {children}
     </button>
+  );
+}
+
+const SYNC_DOT = {
+  idle:    { colour: 'rgba(255,255,255,0.25)', title: 'Not synced yet',      pulse: false },
+  syncing: { colour: '#f59e0b',                title: 'Syncing to cloud…',   pulse: true  },
+  ok:      { colour: '#22c55e',                title: 'Synced to cloud',     pulse: false },
+  error:   { colour: '#ef4444',                title: 'Sync failed — working offline', pulse: false },
+};
+
+function SyncDot({ status = 'idle' }) {
+  const [visible, setVisible] = useState(true);
+  const cfg = SYNC_DOT[status] ?? SYNC_DOT.idle;
+
+  // pulse animation via opacity toggle
+  useEffect(() => {
+    if (!cfg.pulse) { setVisible(true); return; }
+    const id = setInterval(() => setVisible(v => !v), 500);
+    return () => clearInterval(id);
+  }, [cfg.pulse]);
+
+  return (
+    <span
+      title={cfg.title}
+      style={{
+        display: 'inline-block',
+        width: 8, height: 8,
+        borderRadius: '50%',
+        backgroundColor: cfg.colour,
+        opacity: visible ? 1 : 0.25,
+        transition: cfg.pulse ? 'none' : 'background-color 0.4s ease',
+        flexShrink: 0,
+      }}
+    />
   );
 }
 
@@ -133,6 +167,7 @@ export default function Toolbar({
   onToggleDrawMode,
   onFinishRoute,
   onCancelDraw,
+  syncStatus = 'idle',
 }) {
   return (
     <header
@@ -204,6 +239,7 @@ export default function Toolbar({
           Draw Route
         </ToolbarBtn>
       )}
+      <SyncDot status={syncStatus} />
       <VenueSelect />
       <LabelsToggle showLabels={showLabels} onToggleLabels={onToggleLabels} />
     </header>
