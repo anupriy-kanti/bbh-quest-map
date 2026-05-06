@@ -1,7 +1,12 @@
-import { supabase } from '../lib/supabase';
-
 const STORAGE_KEY = 'bbhqmap_data';
-const ROW_ID = 'lalbagh';
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzdW1hZ2tvdWVyaWtlaGFtYnd6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNTEzMTEsImV4cCI6MjA5MzYyNzMxMX0.-k6N7oKKXGmIldDMLPyFxiIhB9mmYLIcAmCOT95eoRU';
+const BASE_URL = 'https://usumagkouerikehambwz.supabase.co/rest/v1/map_data';
+
+const HEADERS = {
+  'apikey': ANON_KEY,
+  'Authorization': `Bearer ${ANON_KEY}`,
+  'Content-Type': 'application/json',
+};
 
 const TEMPLATE = {
   version: '1.0',
@@ -16,7 +21,6 @@ const TEMPLATE = {
 };
 
 // ── Status callback ────────────────────────────────────────────────────────────
-// App registers a listener so storage can push sync status without circular deps.
 let _onSyncStatus = null;
 export function onSyncStatusChange(cb) {
   _onSyncStatus = cb;
@@ -43,27 +47,38 @@ function writeLocal(record) {
 // ── Cloud ──────────────────────────────────────────────────────────────────────
 export async function loadDataFromCloud() {
   try {
-    const { data, error } = await supabase
-      .from('map_data')
-      .select('data')
-      .eq('id', ROW_ID)
-      .single();
-    if (error || !data) return null;
-    return { ...TEMPLATE, ...data.data };
-  } catch {
+    const res = await fetch(
+      `${BASE_URL}?select=data&id=eq.lalbagh`,
+      { headers: HEADERS },
+    );
+    if (!res.ok) {
+      console.error('bbhqmap: cloud load failed', res.status, await res.text());
+      return null;
+    }
+    const rows = await res.json();
+    if (!rows.length) return null;
+    return { ...TEMPLATE, ...rows[0].data };
+  } catch (err) {
+    console.error('bbhqmap: cloud load error', err);
     return null;
   }
 }
 
-async function syncToCloud(payload) {
+export async function syncToCloud(payload) {
   try {
-    const { error } = await supabase
-      .from('map_data')
-      .upsert({ id: ROW_ID, data: payload });
-    if (error) throw error;
+    const res = await fetch(BASE_URL, {
+      method: 'POST',
+      headers: { ...HEADERS, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ id: 'lalbagh', data: payload }),
+    });
+    if (!res.ok) {
+      console.error('bbhqmap: cloud sync failed', res.status, await res.text());
+      pushStatus('error');
+      return;
+    }
     pushStatus('ok');
   } catch (err) {
-    console.error('bbhqmap: Supabase sync failed', err);
+    console.error('bbhqmap: cloud sync error', err);
     pushStatus('error');
   }
 }

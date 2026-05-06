@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import MapCanvas from './components/MapCanvas';
 import RightPanel from './components/RightPanel';
 import Toolbar from './components/Toolbar';
-import { loadData, loadDataFromCloud, saveSpots, saveRoutes, onSyncStatusChange } from './utils/storage';
+import { loadData, loadDataFromCloud, syncToCloud, saveSpots, saveRoutes, onSyncStatusChange } from './utils/storage';
 import { QUEST_COLOURS } from './constants/questColours';
 
 const QUEST_CODES = Object.keys(QUEST_COLOURS).filter(k => k !== 'BBH');
@@ -157,12 +157,18 @@ export default function App() {
   useEffect(() => {
     onSyncStatusChange(setSyncStatus);
 
+    const local = loadData();
+
     loadDataFromCloud().then(cloudData => {
-      if (!cloudData) return;
-      setSpots(cloudData.spots ?? []);
-      setRoutes(cloudData.routes ?? []);
-      // Keep localStorage in sync with cloud truth
-      localStorage.setItem('bbhqmap_data', JSON.stringify(cloudData));
+      if (cloudData) {
+        setSpots(cloudData.spots ?? []);
+        setRoutes(cloudData.routes ?? []);
+        localStorage.setItem('bbhqmap_data', JSON.stringify(cloudData));
+      } else {
+        // Cloud had no row — push existing localStorage data up immediately
+        setSyncStatus('syncing');
+        syncToCloud(local);
+      }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
