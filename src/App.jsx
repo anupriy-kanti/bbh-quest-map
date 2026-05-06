@@ -327,6 +327,38 @@ export default function App() {
     });
   }, []);
 
+  const handleInsertWaypoint = useCallback((routeId, segmentIndex, x, y) => {
+    setRoutes(prev => {
+      const next = prev.map(r => {
+        if (r.routeId !== routeId) return r;
+        const newNode = { nodeType: 'waypoint', x, y };
+        const path = [
+          ...r.path.slice(0, segmentIndex + 1),
+          newNode,
+          ...r.path.slice(segmentIndex + 1),
+        ];
+        return { ...r, path };
+      });
+      saveRoutes(next);
+      return next;
+    });
+  }, []);
+
+  const handleSegmentDragEnd = useCallback((routeId, movedNodes) => {
+    setRoutes(prev => {
+      const next = prev.map(r => {
+        if (r.routeId !== routeId) return r;
+        const path = r.path.map((node, i) => {
+          const moved = movedNodes.find(m => m.nodeIndex === i);
+          return moved ? { ...node, x: moved.x, y: moved.y } : node;
+        });
+        return { ...r, path };
+      });
+      saveRoutes(next);
+      return next;
+    });
+  }, []);
+
   // ── Label toggle ───────────────────────────────────────────────────────────
 
   const handleToggleLabels = useCallback(() => {
@@ -373,6 +405,8 @@ export default function App() {
             onMoveConfirm={handleMoveConfirm}
             onMoveCancelAndSelect={handleMoveCancelAndSelect}
             onWaypointDragEnd={handleWaypointDragEnd}
+            onInsertWaypoint={handleInsertWaypoint}
+            onSegmentDragEnd={handleSegmentDragEnd}
           />
         </main>
 

@@ -25,9 +25,6 @@ const PIN_FONT_SIZE = 11;
 const PIN_LABEL_GAP = 3;
 
 // ── Pan clamping ───────────────────────────────────────────────────────────────
-// Ensures the map image always covers the visible container — no black space.
-// If an image dimension is smaller than the container (only possible below fitScale,
-// which the zoom floor prevents), we centre it defensively.
 function clampTransform({ x, y, scale }, cW, cH) {
   const iW = MAP_CONFIG.naturalWidth  * scale;
   const iH = MAP_CONFIG.naturalHeight * scale;
@@ -52,6 +49,8 @@ export default function MapCanvas({
   onMoveConfirm,
   onMoveCancelAndSelect,
   onWaypointDragEnd,
+  onInsertWaypoint,
+  onSegmentDragEnd,
 }) {
   const containerRef    = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: MAP_CONFIG.defaultZoom });
@@ -68,11 +67,38 @@ export default function MapCanvas({
   const liveWaypointPosRef = useRef(null);
   const [liveWaypointPos, setLiveWaypointPos] = useState(null);
 
+  // ── Segment selection & drag ───────────────────────────────────────────────
+  const [selectedSegment, setSelectedSegmentState] = useState(null); // { routeId, segmentIndex }
+  const selectedSegmentRef = useRef(null);
+
+  const pendingClickRef = useRef(null); // { timer, routeId, segmentIndex, x, y, time }
+
+  const segmentDragRef    = useRef({ active: false });
+  const liveSegmentDragRef = useRef(null);
+  const [liveSegmentDrag, setLiveSegmentDrag] = useState(null); // { routeId, segmentIndex, dx, dy }
+
   const routesRef          = useRef(routes);
   const spotsByIdRef       = useRef({});
   const selectedRouteIdRef = useRef(selectedRouteId);
   useEffect(() => { routesRef.current = routes; }, [routes]);
   useEffect(() => { selectedRouteIdRef.current = selectedRouteId; }, [selectedRouteId]);
+
+  // Clear segment selection whenever the selected route changes
+  useEffect(() => {
+    selectedSegmentRef.current = null;
+    setSelectedSegmentState(null);
+    if (pendingClickRef.current) {
+      clearTimeout(pendingClickRef.current.timer);
+      pendingClickRef.current = null;
+    }
+  }, [selectedRouteId]);
+
+  // Cleanup pending click timer on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingClickRef.current) clearTimeout(pendingClickRef.current.timer);
+    };
+  }, []);
 
   // ── Fit-to-viewport on mount ───────────────────────────────────────────────
 
@@ -80,7 +106,7 @@ export default function MapCanvas({
     const container = containerRef.current;
     if (!container) return;
     const { width, height } = container.getBoundingClientRect();
-    containerSizeRef.current = { width, height };  // Fix 1
+    containerSizeRef.current = { width, height };
     const fitScale = Math.min(
       width  / MAP_CONFIG.naturalWidth,
       height / MAP_CONFIG.naturalHeight,
@@ -102,6 +128,48 @@ export default function MapCanvas({
 
   const onMouseDown = useCallback((e) => {
     if (e.button !== 0) return;
+
+    // If a segment is selected, check if this press is on that segment → start segment drag
+    if (selectedSegmentRef.current) {
+      const { routeId, segmentIndex } = selectedSegmentRef.current;
+      const container = containerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const t = transformRef.current;
+        const naturalX = (e.clientX - rect.left - t.x) / t.scale;
+        const naturalY = (e.clientY - rect.top  - t.y) / t.scale;
+        const route = routesRef.current.find(r => r.routeId === routeId);
+        if (route) {
+          const nodeA = route.path[segmentIndex];
+          const nodeB = route.path[segmentIndex + 1];
+          const a = getNodeCoords(nodeA, spotsByIdRef.current);
+          const b = getNodeCoords(nodeB, spotsByIdRef.current);
+          if (a && b) {
+            const toleranceNatural = 8 / t.scale;
+            const d = pointToSegmentDist(naturalX, naturalY, a.cx, a.cy, b.cx, b.cy);
+            if (d <= toleranceNatural) {
+              segmentDragRef.current = {
+                active: true,
+                routeId,
+                segmentIndex,
+                startX: naturalX,
+                startY: naturalY,
+                node0: nodeA,
+                node1: nodeB,
+                node0Index: segmentIndex,
+                node1Index: segmentIndex + 1,
+              };
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
+      // Pressed outside the selected segment — deselect it and fall through to pan
+      selectedSegmentRef.current = null;
+      setSelectedSegmentState(null);
+    }
+
     dragging.current     = true;
     hasMoved.current     = false;
     lastPos.current      = { x: e.clientX, y: e.clientY };
@@ -110,6 +178,27 @@ export default function MapCanvas({
   }, []);
 
   const onMouseMove = useCallback((e) => {
+    // Segment drag
+    if (segmentDragRef.current.active) {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const t = transformRef.current;
+      const naturalX = (e.clientX - rect.left - t.x) / t.scale;
+      const naturalY = (e.clientY - rect.top  - t.y) / t.scale;
+      const dx = (naturalX - segmentDragRef.current.startX) / MAP_CONFIG.naturalWidth;
+      const dy = (naturalY - segmentDragRef.current.startY) / MAP_CONFIG.naturalHeight;
+      const pos = {
+        routeId: segmentDragRef.current.routeId,
+        segmentIndex: segmentDragRef.current.segmentIndex,
+        dx,
+        dy,
+      };
+      liveSegmentDragRef.current = pos;
+      setLiveSegmentDrag(pos);
+      return;
+    }
+
     if (waypointDragRef.current.active) {
       const container = containerRef.current;
       if (!container) return;
@@ -146,6 +235,34 @@ export default function MapCanvas({
   }, []);
 
   const onMouseUp = useCallback((e) => {
+    // Segment drag end
+    if (segmentDragRef.current.active) {
+      const { routeId, node0, node1, node0Index, node1Index } = segmentDragRef.current;
+      segmentDragRef.current = { active: false };
+      const finalDrag = liveSegmentDragRef.current;
+      liveSegmentDragRef.current = null;
+      setLiveSegmentDrag(null);
+      if (finalDrag && (Math.abs(finalDrag.dx) > 0.0001 || Math.abs(finalDrag.dy) > 0.0001)) {
+        const movedNodes = [];
+        if (node0.nodeType === 'waypoint') {
+          movedNodes.push({
+            nodeIndex: node0Index,
+            x: Math.max(0, Math.min(1, node0.x + finalDrag.dx)),
+            y: Math.max(0, Math.min(1, node0.y + finalDrag.dy)),
+          });
+        }
+        if (node1.nodeType === 'waypoint') {
+          movedNodes.push({
+            nodeIndex: node1Index,
+            x: Math.max(0, Math.min(1, node1.x + finalDrag.dx)),
+            y: Math.max(0, Math.min(1, node1.y + finalDrag.dy)),
+          });
+        }
+        if (movedNodes.length > 0) onSegmentDragEnd?.(routeId, movedNodes);
+      }
+      return;
+    }
+
     if (waypointDragRef.current.active) {
       const { routeId, nodeIndex } = waypointDragRef.current;
       waypointDragRef.current = { active: false, routeId: null, nodeIndex: null };
@@ -201,7 +318,65 @@ export default function MapCanvas({
       return;
     }
 
-    // Normal mode — hit-test route polylines
+    // ── Segment click detection (only when a route is selected) ───────────
+    const selRouteId = selectedRouteIdRef.current;
+    if (selRouteId) {
+      const selRoute = routesRef.current.find(r => r.routeId === selRouteId);
+      if (selRoute) {
+        const toleranceNatural = 8 / t.scale;
+        let hitSegIdx = -1;
+        const coords = selRoute.path.map(n => getNodeCoords(n, spotsByIdRef.current));
+        for (let i = 0; i < coords.length - 1; i++) {
+          const a = coords[i], b = coords[i + 1];
+          if (!a || !b) continue;
+          const d = pointToSegmentDist(naturalX, naturalY, a.cx, a.cy, b.cx, b.cy);
+          if (d <= toleranceNatural) { hitSegIdx = i; break; }
+        }
+
+        if (hitSegIdx >= 0) {
+          const now = Date.now();
+          const pending = pendingClickRef.current;
+          if (
+            pending &&
+            pending.routeId === selRouteId &&
+            pending.segmentIndex === hitSegIdx &&
+            now - pending.time < 200
+          ) {
+            // Double-click → enter segment-selected state
+            clearTimeout(pending.timer);
+            pendingClickRef.current = null;
+            selectedSegmentRef.current = { routeId: selRouteId, segmentIndex: hitSegIdx };
+            setSelectedSegmentState({ routeId: selRouteId, segmentIndex: hitSegIdx });
+          } else {
+            // First click — schedule waypoint insertion after 200ms
+            if (pending) {
+              clearTimeout(pending.timer);
+              pendingClickRef.current = null;
+            }
+            const capturedRouteId  = selRouteId;
+            const capturedSegIdx   = hitSegIdx;
+            const capturedLng      = lng;
+            const capturedLat      = lat;
+            const timer = setTimeout(() => {
+              pendingClickRef.current = null;
+              onInsertWaypoint?.(capturedRouteId, capturedSegIdx, capturedLng, capturedLat);
+            }, 200);
+            pendingClickRef.current = { timer, routeId: capturedRouteId, segmentIndex: capturedSegIdx, x: capturedLng, y: capturedLat, time: now };
+          }
+          return;
+        }
+
+        // Clicked outside the selected route's segments — deselect segment & route
+        if (selectedSegmentRef.current) {
+          selectedSegmentRef.current = null;
+          setSelectedSegmentState(null);
+        }
+        onRouteDeselect?.();
+        return;
+      }
+    }
+
+    // Normal mode — hit-test route polylines (for initial selection)
     const toleranceNatural = 8 / t.scale;
     let hitRouteId = null;
     for (const route of routesRef.current) {
@@ -227,7 +402,7 @@ export default function MapCanvas({
         onMapClick?.(lng, lat);
       }
     }
-  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, drawMode]);
+  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onInsertWaypoint, onSegmentDragEnd, drawMode]);
 
   // ── Zoom ───────────────────────────────────────────────────────────────────
 
@@ -245,7 +420,7 @@ export default function MapCanvas({
       const minScale = fitScaleRef.current;
       const newScale = Math.min(MAP_CONFIG.maxZoom, Math.max(minScale, prev.scale * factor));
       const ratio    = newScale / prev.scale;
-      const next = clampTransform(             // Fix 1: clamp after zoom too
+      const next = clampTransform(
         {
           x: mouseX - ratio * (mouseX - prev.x),
           y: mouseY - ratio * (mouseY - prev.y),
@@ -353,6 +528,16 @@ export default function MapCanvas({
                   cx: liveWaypointPos.x * MAP_CONFIG.naturalWidth,
                   cy: liveWaypointPos.y * MAP_CONFIG.naturalHeight,
                 };
+              } else if (
+                node.nodeType === 'waypoint' &&
+                liveSegmentDrag?.routeId === route.routeId &&
+                (i === liveSegmentDrag.segmentIndex || i === liveSegmentDrag.segmentIndex + 1)
+              ) {
+                // Apply segment drag offset to waypoint endpoints
+                c = {
+                  cx: (node.x + liveSegmentDrag.dx) * MAP_CONFIG.naturalWidth,
+                  cy: (node.y + liveSegmentDrag.dy) * MAP_CONFIG.naturalHeight,
+                };
               } else {
                 c = getNodeCoords(node, spotsById);
               }
@@ -361,6 +546,14 @@ export default function MapCanvas({
             const validCoords = coordsWithIdx.filter(({ c }) => c !== null);
             if (validCoords.length < 2) return null;
             const pointsStr = validCoords.map(({ c }) => `${c.cx},${c.cy}`).join(' ');
+
+            // Determine if a segment of this route is selected
+            const activeSeg =
+              isRouteSelected &&
+              selectedSegment?.routeId === route.routeId
+                ? selectedSegment.segmentIndex
+                : -1;
+
             return (
               <g key={route.routeId}>
                 <polyline
@@ -371,6 +564,23 @@ export default function MapCanvas({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
+
+                {/* Selected segment highlight */}
+                {activeSeg >= 0 && (() => {
+                  const aEntry = coordsWithIdx[activeSeg];
+                  const bEntry = coordsWithIdx[activeSeg + 1];
+                  if (!aEntry?.c || !bEntry?.c) return null;
+                  return (
+                    <line
+                      x1={aEntry.c.cx} y1={aEntry.c.cy}
+                      x2={bEntry.c.cx} y2={bEntry.c.cy}
+                      stroke="rgba(245,210,193,0.6)"
+                      strokeWidth={strokeW * 1.4}
+                      strokeLinecap="round"
+                    />
+                  );
+                })()}
+
                 {coordsWithIdx.map(({ c, i, nodeType }) => {
                   if (nodeType !== 'waypoint' || !c) return null;
                   return (
@@ -436,7 +646,6 @@ export default function MapCanvas({
                 data-spot-id={spot.spotId}
                 style={{ pointerEvents: 'auto', cursor: 'pointer' }}
               >
-                {/* Fix 4: cream ring only when selected AND not in move mode */}
                 {isSelected && !isMoving && (
                   <circle
                     cx={cx} cy={cy}
@@ -447,7 +656,6 @@ export default function MapCanvas({
                   />
                 )}
 
-                {/* Move-mode ring — dashed amber, pulsing */}
                 {isMoving && (
                   <circle
                     cx={cx} cy={cy}
@@ -460,7 +668,6 @@ export default function MapCanvas({
                   />
                 )}
 
-                {/* Pin body */}
                 <circle
                   cx={cx} cy={cy}
                   r={pinR}
@@ -469,7 +676,6 @@ export default function MapCanvas({
                   strokeWidth={pinSW}
                 />
 
-                {/* Label below pin */}
                 {showLabels && label && (
                   <text
                     x={cx}
@@ -483,7 +689,6 @@ export default function MapCanvas({
                     {label}
                   </text>
                 )}
-                {/* Landmark secondary label */}
                 {showLabels && label && landmark && (
                   <text
                     x={cx}
