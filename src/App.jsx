@@ -149,6 +149,7 @@ export default function App() {
   const [drawMode,               setDrawMode]               = useState(false);
   const [draftPath,              setDraftPath]              = useState([]);
   const [showFinishForm,         setShowFinishForm]         = useState(false);
+  const [isMobile,               setIsMobile]               = useState(() => window.innerWidth < 768);
 
   const selectedSpot  = spots.find(s => s.spotId === selectedSpotId) ?? null;
   const selectedRoute = routes.find(r => r.routeId === selectedRouteId) ?? null;
@@ -173,7 +174,13 @@ export default function App() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Map interaction ────────────────────────────────────────────────────────
+  // ── Mobile detection ───────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const handleMapClick = useCallback((lng, lat) => {
     if (drawMode) {
@@ -420,6 +427,10 @@ export default function App() {
     });
   }, []);
 
+  // ── Mobile panel visibility ────────────────────────────────────────────────
+
+  const panelHasContent = selectedSpot !== null || selectedRoute !== null;
+
   // ── Label toggle ───────────────────────────────────────────────────────────
 
   const handleToggleLabels = useCallback(() => {
@@ -449,7 +460,7 @@ export default function App() {
         syncStatus={syncStatus}
       />
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
         <main style={{ flex: 1, overflow: 'hidden', backgroundColor: '#1a0112' }}>
           <MapCanvas
             spots={spots}
@@ -474,21 +485,34 @@ export default function App() {
           />
         </main>
 
-        <RightPanel
-          spots={spots}
-          selectedSpot={selectedSpot}
-          onClose={handleClosePanel}
-          onSave={handleSaveSpot}
-          onDelete={handleDeleteSpot}
-          draft={drafts[selectedSpotId]}
-          onDraftChange={handleDraftChange}
-          onMoveStart={handleMoveStart}
-          selectedRoute={selectedRoute}
-          onRouteSave={handleSaveRoute}
-          onRouteDelete={handleDeleteRoute}
-          selectedWaypointIndex={selectedWaypointIndex}
-          onDeleteWaypoint={handleDeleteWaypoint}
-        />
+        {(!isMobile || panelHasContent) && (
+          <div
+            className={isMobile ? 'mobile-panel-overlay' : undefined}
+            style={isMobile ? {
+              position: 'absolute',
+              inset: 0,
+              zIndex: 200,
+              display: 'flex',
+              flexDirection: 'column',
+            } : undefined}
+          >
+            <RightPanel
+              spots={spots}
+              selectedSpot={selectedSpot}
+              onClose={handleClosePanel}
+              onSave={handleSaveSpot}
+              onDelete={handleDeleteSpot}
+              draft={drafts[selectedSpotId]}
+              onDraftChange={handleDraftChange}
+              onMoveStart={handleMoveStart}
+              selectedRoute={selectedRoute}
+              onRouteSave={handleSaveRoute}
+              onRouteDelete={handleDeleteRoute}
+              selectedWaypointIndex={selectedWaypointIndex}
+              onDeleteWaypoint={handleDeleteWaypoint}
+            />
+          </div>
+        )}
       </div>
 
       {showFinishForm && (
