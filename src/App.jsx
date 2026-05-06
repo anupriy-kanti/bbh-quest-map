@@ -159,13 +159,14 @@ export default function App() {
 
     const local = loadData();
 
+    const hasContent = (d) => (d?.spots?.length ?? 0) > 0 || (d?.routes?.length ?? 0) > 0;
+
     loadDataFromCloud().then(cloudData => {
-      if (cloudData) {
+      if (hasContent(cloudData)) {
         setSpots(cloudData.spots ?? []);
         setRoutes(cloudData.routes ?? []);
         localStorage.setItem('bbhqmap_data', JSON.stringify(cloudData));
-      } else {
-        // Cloud had no row — push existing localStorage data up immediately
+      } else if (hasContent(local)) {
         setSyncStatus('syncing');
         syncToCloud(local);
       }
