@@ -657,10 +657,10 @@ export default function MapCanvas({
           {spots.map(spot => {
             const cx = spot.lng * MAP_CONFIG.naturalWidth;
             const cy = spot.lat * MAP_CONFIG.naturalHeight;
-            const isSelected = spot.spotId === selectedSpotId;
-            const isMoving   = spot.spotId === movingSpotId;
-            const label    = spot.emoticon || spot.shortLabel || '';
-            const landmark = spot.landMark || '';
+            const isSelected     = spot.spotId === selectedSpotId;
+            const isMoving       = spot.spotId === movingSpotId;
+            const shortLabelText = spot.shortLabel || '';
+            const landmark       = spot.landMark  || '';
 
             return (
               <g
@@ -690,36 +690,53 @@ export default function MapCanvas({
                   />
                 )}
 
-                <circle
-                  cx={cx} cy={cy}
-                  r={pinR}
-                  fill={isMoving ? '#ff9301' : '#420424'}
-                  stroke="#f5d2c1"
-                  strokeWidth={pinSW}
-                />
+                {spot.emoticon ? (
+                  <>
+                    {/* transparent hit-area keeps click behaviour consistent */}
+                    <circle cx={cx} cy={cy} r={pinR} fill="transparent" stroke="none" />
+                    <text
+                      x={cx} y={cy}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={22 / scale}
+                      style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    >
+                      {spot.emoticon}
+                    </text>
+                  </>
+                ) : (
+                  <circle
+                    cx={cx} cy={cy}
+                    r={pinR}
+                    fill={isMoving ? '#ff9301' : '#420424'}
+                    stroke="#f5d2c1"
+                    strokeWidth={pinSW}
+                  />
+                )}
 
-                {showLabels && label && (
+                {showLabels && shortLabelText && (
                   <text
                     x={cx}
                     y={cy + pinR + labelGap}
                     textAnchor="middle"
                     dominantBaseline="hanging"
                     fontSize={pinFS}
+                    fontWeight={700}
                     fill="#000000"
                     style={{ pointerEvents: 'none', userSelect: 'none' }}
                   >
-                    {label}
+                    {shortLabelText}
                   </text>
                 )}
-                {showLabels && label && landmark && (
+                {showLabels && shortLabelText && landmark && (
                   <text
                     x={cx}
                     y={cy + pinR + labelGap + pinFS + 2 / scale}
                     textAnchor="middle"
                     dominantBaseline="hanging"
                     fontSize={10 / scale}
+                    fontWeight={700}
                     fill="#000000"
-                    opacity={0.75}
                     style={{ pointerEvents: 'none', userSelect: 'none' }}
                   >
                     {landmark}
