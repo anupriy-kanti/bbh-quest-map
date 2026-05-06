@@ -276,6 +276,7 @@ export default function App() {
     } else {
       setDrawMode(true);
       setSelectedSpotId(null);
+      setSelectedRouteId(null);
       setMovingSpotId(null);
     }
   }, [drawMode]);
