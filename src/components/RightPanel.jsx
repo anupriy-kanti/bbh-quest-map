@@ -135,6 +135,8 @@ export default function RightPanel({
   selectedRoute,
   onRouteSave,
   onRouteDelete,
+  selectedWaypointIndex,
+  onDeleteWaypoint,
 }) {
   return (
     <div
@@ -164,6 +166,8 @@ export default function RightPanel({
           route={selectedRoute}
           onSave={onRouteSave}
           onDelete={onRouteDelete}
+          selectedWaypointIndex={selectedWaypointIndex}
+          onDeleteWaypoint={onDeleteWaypoint}
         />
       ) : (
         <StatsView spots={spots} />

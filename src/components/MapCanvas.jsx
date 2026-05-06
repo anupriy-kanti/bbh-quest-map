@@ -44,6 +44,8 @@ export default function MapCanvas({
   onRouteDeselect,
   selectedSpotId,
   selectedRouteId,
+  selectedWaypointIndex,
+  onWaypointSelect,
   showLabels,
   movingSpotId,
   onMoveConfirm,
@@ -264,12 +266,20 @@ export default function MapCanvas({
     }
 
     if (waypointDragRef.current.active) {
-      const { routeId, nodeIndex } = waypointDragRef.current;
+      const { routeId, nodeIndex, startX, startY } = waypointDragRef.current;
       waypointDragRef.current = { active: false, routeId: null, nodeIndex: null };
       const finalPos = liveWaypointPosRef.current;
       liveWaypointPosRef.current = null;
       setLiveWaypointPos(null);
-      if (finalPos) onWaypointDragEnd?.(routeId, nodeIndex, finalPos.x, finalPos.y);
+      const movedEnough = finalPos && (
+        Math.abs(e.clientX - (startX ?? e.clientX)) > 4 ||
+        Math.abs(e.clientY - (startY ?? e.clientY)) > 4
+      );
+      if (movedEnough) {
+        onWaypointDragEnd?.(routeId, nodeIndex, finalPos.x, finalPos.y);
+      } else {
+        onWaypointSelect?.(routeId, nodeIndex);
+      }
       return;
     }
 
@@ -402,7 +412,7 @@ export default function MapCanvas({
         onMapClick?.(lng, lat);
       }
     }
-  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onInsertWaypoint, onSegmentDragEnd, drawMode]);
+  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onWaypointSelect, onInsertWaypoint, onSegmentDragEnd, drawMode]);
 
   // ── Zoom ───────────────────────────────────────────────────────────────────
 
@@ -583,20 +593,32 @@ export default function MapCanvas({
 
                 {coordsWithIdx.map(({ c, i, nodeType }) => {
                   if (nodeType !== 'waypoint' || !c) return null;
+                  const isSelectedWp = isRouteSelected && selectedWaypointIndex === i;
                   return (
-                    <circle
-                      key={i}
-                      cx={c.cx} cy={c.cy}
-                      r={dotR}
-                      fill={route.colour}
-                      stroke="#f5d2c1"
-                      strokeWidth={1.5 / scale}
-                      style={{ pointerEvents: 'auto', cursor: 'move' }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        waypointDragRef.current = { active: true, routeId: route.routeId, nodeIndex: i };
-                      }}
-                    />
+                    <g key={i}>
+                      {isSelectedWp && (
+                        <circle
+                          cx={c.cx} cy={c.cy}
+                          r={dotR + 5 / scale}
+                          fill="none"
+                          stroke="#f5d2c1"
+                          strokeWidth={2 / scale}
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      )}
+                      <circle
+                        cx={c.cx} cy={c.cy}
+                        r={dotR}
+                        fill={route.colour}
+                        stroke="#f5d2c1"
+                        strokeWidth={1.5 / scale}
+                        style={{ pointerEvents: 'auto', cursor: 'move' }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          waypointDragRef.current = { active: true, routeId: route.routeId, nodeIndex: i, startX: e.clientX, startY: e.clientY };
+                        }}
+                      />
+                    </g>
                   );
                 })}
               </g>

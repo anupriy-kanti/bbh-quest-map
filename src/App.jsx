@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import MapCanvas from './components/MapCanvas';
 import RightPanel from './components/RightPanel';
 import Toolbar from './components/Toolbar';
@@ -137,16 +137,17 @@ function makeBlankSpot(lng, lat) {
 }
 
 export default function App() {
-  const [spots,           setSpots]           = useState(() => loadData().spots ?? []);
-  const [routes,          setRoutes]          = useState(() => loadData().routes ?? []);
-  const [selectedSpotId,  setSelectedSpotId]  = useState(null);
-  const [selectedRouteId, setSelectedRouteId] = useState(null);
-  const [drafts,          setDrafts]          = useState({});
-  const [movingSpotId,    setMovingSpotId]    = useState(null);
-  const [showLabels,      setShowLabels]      = useState(true);
-  const [drawMode,        setDrawMode]        = useState(false);
-  const [draftPath,       setDraftPath]       = useState([]);
-  const [showFinishForm,  setShowFinishForm]  = useState(false);
+  const [spots,                  setSpots]                  = useState(() => loadData().spots ?? []);
+  const [routes,                 setRoutes]                 = useState(() => loadData().routes ?? []);
+  const [selectedSpotId,         setSelectedSpotId]         = useState(null);
+  const [selectedRouteId,        setSelectedRouteId]        = useState(null);
+  const [selectedWaypointIndex,  setSelectedWaypointIndex]  = useState(null);
+  const [drafts,                 setDrafts]                 = useState({});
+  const [movingSpotId,           setMovingSpotId]           = useState(null);
+  const [showLabels,             setShowLabels]             = useState(true);
+  const [drawMode,               setDrawMode]               = useState(false);
+  const [draftPath,              setDraftPath]              = useState([]);
+  const [showFinishForm,         setShowFinishForm]         = useState(false);
 
   const selectedSpot  = spots.find(s => s.spotId === selectedSpotId) ?? null;
   const selectedRoute = routes.find(r => r.routeId === selectedRouteId) ?? null;
@@ -166,10 +167,12 @@ export default function App() {
   const handleRouteClick = useCallback((routeId) => {
     setSelectedRouteId(routeId);
     setSelectedSpotId(null);
+    setSelectedWaypointIndex(null);
   }, []);
 
   const handleRouteDeselect = useCallback(() => {
     setSelectedRouteId(null);
+    setSelectedWaypointIndex(null);
   }, []);
 
   const handleSaveRoute = useCallback((updatedRoute) => {
@@ -196,6 +199,7 @@ export default function App() {
       return;
     }
     setSelectedSpotId(spotId);
+    setSelectedWaypointIndex(null);
   }, [drawMode]);
 
   // ── Panel lifecycle ────────────────────────────────────────────────────────
@@ -327,6 +331,42 @@ export default function App() {
     });
   }, []);
 
+  const handleWaypointSelect = useCallback((routeId, nodeIndex) => {
+    if (routeId !== selectedRouteId) return;
+    setSelectedWaypointIndex(nodeIndex);
+  }, [selectedRouteId]);
+
+  const handleDeleteWaypoint = useCallback(() => {
+    if (selectedWaypointIndex === null || !selectedRoute) return;
+    const node = selectedRoute.path[selectedWaypointIndex];
+    if (!node || node.nodeType !== 'waypoint') return;
+    if (selectedRoute.path.length <= 2) return;
+    setRoutes(prev => {
+      const next = prev.map(r => {
+        if (r.routeId !== selectedRouteId) return r;
+        const path = r.path.filter((_, i) => i !== selectedWaypointIndex);
+        return { ...r, path };
+      });
+      saveRoutes(next);
+      return next;
+    });
+    setSelectedWaypointIndex(null);
+  }, [selectedWaypointIndex, selectedRoute, selectedRouteId]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (selectedWaypointIndex === null) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        handleDeleteWaypoint();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedWaypointIndex, handleDeleteWaypoint]);
+
   const handleInsertWaypoint = useCallback((routeId, segmentIndex, x, y) => {
     setRoutes(prev => {
       const next = prev.map(r => {
@@ -400,6 +440,8 @@ export default function App() {
             onRouteDeselect={handleRouteDeselect}
             selectedSpotId={selectedSpotId}
             selectedRouteId={selectedRouteId}
+            selectedWaypointIndex={selectedWaypointIndex}
+            onWaypointSelect={handleWaypointSelect}
             showLabels={showLabels}
             movingSpotId={movingSpotId}
             onMoveConfirm={handleMoveConfirm}
@@ -422,6 +464,8 @@ export default function App() {
           selectedRoute={selectedRoute}
           onRouteSave={handleSaveRoute}
           onRouteDelete={handleDeleteRoute}
+          selectedWaypointIndex={selectedWaypointIndex}
+          onDeleteWaypoint={handleDeleteWaypoint}
         />
       </div>
 

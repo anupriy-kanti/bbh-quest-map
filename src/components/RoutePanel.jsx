@@ -18,7 +18,7 @@ const labelStyle = {
   textTransform: 'uppercase', color: 'rgba(245,210,193,0.55)',
 };
 
-export default function RoutePanel({ route, onSave, onDelete }) {
+export default function RoutePanel({ route, onSave, onDelete, selectedWaypointIndex, onDeleteWaypoint }) {
   const [name,     setName]     = useState(route.name);
   const [questKey, setQuestKey] = useState(route.questCode || '');
   const [customHex, setCustomHex] = useState(route.colour || '');
@@ -98,6 +98,20 @@ export default function RoutePanel({ route, onSave, onDelete }) {
         >
           Save Changes
         </button>
+
+        {selectedWaypointIndex !== null && (
+          <button
+            onClick={onDeleteWaypoint}
+            style={{
+              width: '100%', padding: '9px 0', marginTop: 8,
+              background: 'transparent', border: 'none', borderRadius: 4,
+              color: '#ff6b6b', fontSize: 13, cursor: 'pointer',
+              fontFamily: 'system-ui, sans-serif',
+            }}
+          >
+            Delete Waypoint
+          </button>
+        )}
 
         <button
           onClick={() => {
