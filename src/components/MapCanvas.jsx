@@ -70,6 +70,11 @@ export default function MapCanvas({
   const pointersRef = useRef(new Map()); // pointerId → { x, y }
   const pinchRef    = useRef(null);      // { lastDist, lastMid } while two pointers are down
 
+  // On touch, spots are created by long-press, never by tap — a stray tap
+  // mid-walk must not place a blank pin
+  const longPressRef = useRef(null); // { timer }
+  const LONG_PRESS_MS = 500;
+
   // Coarse pointers (touch) get larger hit targets than a mouse cursor needs
   const isCoarse = useMemo(
     () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
@@ -107,10 +112,11 @@ export default function MapCanvas({
     }
   }, [selectedRouteId]);
 
-  // Cleanup pending click timer on unmount
+  // Cleanup pending click / long-press timers on unmount
   useEffect(() => {
     return () => {
       if (pendingClickRef.current) clearTimeout(pendingClickRef.current.timer);
+      if (longPressRef.current)    clearTimeout(longPressRef.current.timer);
     };
   }, []);
 
@@ -159,9 +165,17 @@ export default function MapCanvas({
     try { containerRef.current?.setPointerCapture(e.pointerId); } catch { /* detached node */ }
   }, []);
 
+  const cancelLongPress = useCallback(() => {
+    if (longPressRef.current) {
+      clearTimeout(longPressRef.current.timer);
+      longPressRef.current = null;
+    }
+  }, []);
+
   // Returns true when a second pointer just turned the gesture into a pinch
   const startPinchIfReady = useCallback(() => {
     if (pointersRef.current.size !== 2) return false;
+    cancelLongPress();
     const [a, b] = [...pointersRef.current.values()];
     segmentDragRef.current = { active: false };
     liveSegmentDragRef.current = null;
@@ -176,7 +190,7 @@ export default function MapCanvas({
       lastMid:  { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
     };
     return true;
-  }, []);
+  }, [cancelLongPress]);
 
   const onPointerDown = useCallback((e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -230,8 +244,36 @@ export default function MapCanvas({
     hasMoved.current     = false;
     lastPos.current      = { x: e.clientX, y: e.clientY };
     dragStartPos.current = { x: e.clientX, y: e.clientY };
+
+    // Touch only: press-and-hold on empty map creates a spot
+    if (
+      e.pointerType === 'touch' &&
+      !drawMode &&
+      !movingSpotId &&
+      !selectedRouteIdRef.current &&
+      !e.target?.closest?.('[data-spot-id]')
+    ) {
+      const container = containerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const t = transformRef.current;
+        const lng = (e.clientX - rect.left - t.x) / t.scale / MAP_CONFIG.naturalWidth;
+        const lat = (e.clientY - rect.top  - t.y) / t.scale / MAP_CONFIG.naturalHeight;
+        if (lng >= 0 && lng <= 1 && lat >= 0 && lat <= 1) {
+          cancelLongPress();
+          longPressRef.current = {
+            timer: setTimeout(() => {
+              longPressRef.current = null;
+              hasMoved.current = true; // the lift-off after a long-press is not a tap
+              onMapClick?.(lng, lat);
+            }, LONG_PRESS_MS),
+          };
+        }
+      }
+    }
+
     e.preventDefault();
-  }, [registerPointer, startPinchIfReady, hitTolerance]);
+  }, [registerPointer, startPinchIfReady, hitTolerance, cancelLongPress, drawMode, movingSpotId, onMapClick]);
 
   const onPointerMove = useCallback((e) => {
     if (pointersRef.current.has(e.pointerId)) {
@@ -316,6 +358,7 @@ export default function MapCanvas({
     const totalDy = e.clientY - dragStartPos.current.y;
     if (Math.abs(totalDx) > moveThreshold || Math.abs(totalDy) > moveThreshold) {
       hasMoved.current = true;
+      cancelLongPress(); // moved too far — this is a pan, not a press-and-hold
     }
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
@@ -334,6 +377,7 @@ export default function MapCanvas({
   const onPointerUp = useCallback((e) => {
     pointersRef.current.delete(e.pointerId);
     try { containerRef.current?.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    cancelLongPress();
 
     // Pinch lift-off
     if (pinchRef.current) {
@@ -525,16 +569,18 @@ export default function MapCanvas({
       onRouteClick?.(hitRouteId);
     } else {
       onRouteDeselect?.();
-      if (!selectedRouteIdRef.current) {
+      // Touch taps never create spots — that is the long-press's job
+      if (!selectedRouteIdRef.current && e.pointerType !== 'touch') {
         onMapClick?.(lng, lat);
       }
     }
-  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onWaypointSelect, onInsertWaypoint, onSegmentDragEnd, drawMode, hitTolerance]);
+  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onWaypointSelect, onInsertWaypoint, onSegmentDragEnd, drawMode, hitTolerance, cancelLongPress]);
 
   // Pointer cancelled by the system (e.g. incoming call, gesture takeover) — drop all state, no click
   const onPointerCancel = useCallback((e) => {
     pointersRef.current.delete(e.pointerId);
     try { containerRef.current?.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    cancelLongPress();
     pinchRef.current = null;
     dragging.current = false;
     hasMoved.current = false;

@@ -47,3 +47,11 @@ html, body, #root {
   height: 100%;
   overflow-y: auto;
 }
+
+/* B06b — iOS Safari zooms the page when focusing any field under 16px;
+   override the inline 13px on mobile so the overlay panel stays put */
+@media (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
