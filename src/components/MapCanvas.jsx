@@ -64,6 +64,18 @@ export default function MapCanvas({
   const lastPos      = useRef({ x: 0, y: 0 });
   const dragStartPos = useRef({ x: 0, y: 0 });
   const hasMoved     = useRef(false);
+  const downTargetRef = useRef(null); // element under the pointer at press time — pointer capture retargets later events to the container, so e.target cannot be trusted at release
+
+  // ── Multi-pointer tracking (touch pan + pinch zoom) ────────────────────────
+  const pointersRef = useRef(new Map()); // pointerId → { x, y }
+  const pinchRef    = useRef(null);      // { lastDist, lastMid } while two pointers are down
+
+  // Coarse pointers (touch) get larger hit targets than a mouse cursor needs
+  const isCoarse = useMemo(
+    () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
+    [],
+  );
+  const hitTolerance = isCoarse ? 14 : 8;
 
   const waypointDragRef    = useRef({ active: false, routeId: null, nodeIndex: null });
   const liveWaypointPosRef = useRef(null);
@@ -102,34 +114,76 @@ export default function MapCanvas({
     };
   }, []);
 
-  // ── Fit-to-viewport on mount ───────────────────────────────────────────────
+  // ── Fit-to-viewport on mount, re-fit on container resize (e.g. rotation) ──
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const { width, height } = container.getBoundingClientRect();
-    containerSizeRef.current = { width, height };
-    const fitScale = Math.min(
-      width  / MAP_CONFIG.naturalWidth,
-      height / MAP_CONFIG.naturalHeight,
-    );
-    fitScaleRef.current = fitScale;
-    const initial = clampTransform(
-      {
-        x: (width  - MAP_CONFIG.naturalWidth  * fitScale) / 2,
-        y: (height - MAP_CONFIG.naturalHeight * fitScale) / 2,
-        scale: fitScale,
-      },
-      width, height,
-    );
-    setTransform(initial);
-    transformRef.current = initial;
+
+    const applyFit = (initial) => {
+      const { width, height } = container.getBoundingClientRect();
+      if (width === 0 || height === 0) return;
+      containerSizeRef.current = { width, height };
+      const fitScale = Math.min(
+        width  / MAP_CONFIG.naturalWidth,
+        height / MAP_CONFIG.naturalHeight,
+      );
+      fitScaleRef.current = fitScale;
+      setTransform(prev => {
+        const scale = initial ? fitScale : Math.max(prev.scale, fitScale);
+        const next = clampTransform(
+          initial
+            ? {
+                x: (width  - MAP_CONFIG.naturalWidth  * fitScale) / 2,
+                y: (height - MAP_CONFIG.naturalHeight * fitScale) / 2,
+                scale,
+              }
+            : { ...prev, scale },
+          width, height,
+        );
+        transformRef.current = next;
+        return next;
+      });
+    };
+
+    applyFit(true);
+    const observer = new ResizeObserver(() => applyFit(false));
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
-  // ── Pan ────────────────────────────────────────────────────────────────────
+  // ── Pan / pinch ────────────────────────────────────────────────────────────
 
-  const onMouseDown = useCallback((e) => {
-    if (e.button !== 0) return;
+  const registerPointer = useCallback((e) => {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { containerRef.current?.setPointerCapture(e.pointerId); } catch { /* detached node */ }
+  }, []);
+
+  // Returns true when a second pointer just turned the gesture into a pinch
+  const startPinchIfReady = useCallback(() => {
+    if (pointersRef.current.size !== 2) return false;
+    const [a, b] = [...pointersRef.current.values()];
+    segmentDragRef.current = { active: false };
+    liveSegmentDragRef.current = null;
+    setLiveSegmentDrag(null);
+    waypointDragRef.current = { active: false, routeId: null, nodeIndex: null };
+    liveWaypointPosRef.current = null;
+    setLiveWaypointPos(null);
+    dragging.current = false;
+    hasMoved.current = true; // a pinch is never a tap
+    pinchRef.current = {
+      lastDist: Math.hypot(b.x - a.x, b.y - a.y),
+      lastMid:  { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    };
+    return true;
+  }, []);
+
+  const onPointerDown = useCallback((e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    registerPointer(e);
+    if (startPinchIfReady()) { e.preventDefault(); return; }
+    if (pointersRef.current.size > 2) return;
+    downTargetRef.current = e.target;
 
     // If a segment is selected, check if this press is on that segment → start segment drag
     if (selectedSegmentRef.current) {
@@ -147,7 +201,7 @@ export default function MapCanvas({
           const a = getNodeCoords(nodeA, spotsByIdRef.current);
           const b = getNodeCoords(nodeB, spotsByIdRef.current);
           if (a && b) {
-            const toleranceNatural = 8 / t.scale;
+            const toleranceNatural = hitTolerance / t.scale;
             const d = pointToSegmentDist(naturalX, naturalY, a.cx, a.cy, b.cx, b.cy);
             if (d <= toleranceNatural) {
               segmentDragRef.current = {
@@ -177,9 +231,49 @@ export default function MapCanvas({
     lastPos.current      = { x: e.clientX, y: e.clientY };
     dragStartPos.current = { x: e.clientX, y: e.clientY };
     e.preventDefault();
-  }, []);
+  }, [registerPointer, startPinchIfReady, hitTolerance]);
 
-  const onMouseMove = useCallback((e) => {
+  const onPointerMove = useCallback((e) => {
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    // Pinch zoom — two pointers down
+    if (pinchRef.current) {
+      if (pointersRef.current.size < 2) return;
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      if (dist === 0) return;
+      const mid  = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const midX = mid.x - rect.left;
+      const midY = mid.y - rect.top;
+      const { lastDist, lastMid } = pinchRef.current;
+      const lastMidX = lastMid.x - rect.left;
+      const lastMidY = lastMid.y - rect.top;
+      setTransform(prev => {
+        const { width, height } = containerSizeRef.current;
+        const minScale = fitScaleRef.current;
+        const newScale = Math.min(MAP_CONFIG.maxZoom, Math.max(minScale, prev.scale * (dist / lastDist)));
+        const ratio    = newScale / prev.scale;
+        // Keep the map point that was under the previous midpoint under the new midpoint
+        const next = clampTransform(
+          {
+            x: midX - ratio * (lastMidX - prev.x),
+            y: midY - ratio * (lastMidY - prev.y),
+            scale: newScale,
+          },
+          width, height,
+        );
+        transformRef.current = next;
+        return next;
+      });
+      pinchRef.current = { lastDist: dist, lastMid: mid };
+      return;
+    }
+
     // Segment drag
     if (segmentDragRef.current.active) {
       const container = containerRef.current;
@@ -217,9 +311,10 @@ export default function MapCanvas({
     }
 
     if (!dragging.current) return;
+    const moveThreshold = e.pointerType === 'touch' ? 10 : 4;
     const totalDx = e.clientX - dragStartPos.current.x;
     const totalDy = e.clientY - dragStartPos.current.y;
-    if (Math.abs(totalDx) > 4 || Math.abs(totalDy) > 4) {
+    if (Math.abs(totalDx) > moveThreshold || Math.abs(totalDy) > moveThreshold) {
       hasMoved.current = true;
     }
     const dx = e.clientX - lastPos.current.x;
@@ -236,7 +331,27 @@ export default function MapCanvas({
     });
   }, []);
 
-  const onMouseUp = useCallback((e) => {
+  const onPointerUp = useCallback((e) => {
+    pointersRef.current.delete(e.pointerId);
+    try { containerRef.current?.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+
+    // Pinch lift-off
+    if (pinchRef.current) {
+      if (pointersRef.current.size >= 2) return;
+      pinchRef.current = null;
+      if (pointersRef.current.size === 1) {
+        // One finger remains — carry on as a pan from its current position
+        const [rest] = [...pointersRef.current.values()];
+        dragging.current = true;
+        hasMoved.current = true;
+        lastPos.current  = { x: rest.x, y: rest.y };
+      } else {
+        dragging.current = false;
+        hasMoved.current = false;
+      }
+      return;
+    }
+
     // Segment drag end
     if (segmentDragRef.current.active) {
       const { routeId, node0, node1, node0Index, node1Index } = segmentDragRef.current;
@@ -302,7 +417,9 @@ export default function MapCanvas({
     const lat = naturalY / MAP_CONFIG.naturalHeight;
     const inBounds = lng >= 0 && lng <= 1 && lat >= 0 && lat <= 1;
 
-    const pinEl = e.target.closest('[data-spot-id]');
+    // Use the press-time target: pointer capture retargets release events to the container
+    const pinEl = downTargetRef.current?.closest?.('[data-spot-id]') ?? null;
+    downTargetRef.current = null;
 
     // Move mode
     if (movingSpotId) {
@@ -333,7 +450,7 @@ export default function MapCanvas({
     if (selRouteId) {
       const selRoute = routesRef.current.find(r => r.routeId === selRouteId);
       if (selRoute) {
-        const toleranceNatural = 8 / t.scale;
+        const toleranceNatural = hitTolerance / t.scale;
         let hitSegIdx = -1;
         const coords = selRoute.path.map(n => getNodeCoords(n, spotsByIdRef.current));
         for (let i = 0; i < coords.length - 1; i++) {
@@ -387,7 +504,7 @@ export default function MapCanvas({
     }
 
     // Normal mode — hit-test route polylines (for initial selection)
-    const toleranceNatural = 8 / t.scale;
+    const toleranceNatural = hitTolerance / t.scale;
     let hitRouteId = null;
     for (const route of routesRef.current) {
       const coords = route.path
@@ -412,7 +529,23 @@ export default function MapCanvas({
         onMapClick?.(lng, lat);
       }
     }
-  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onWaypointSelect, onInsertWaypoint, onSegmentDragEnd, drawMode]);
+  }, [onMapClick, onPinClick, onRouteClick, onRouteDeselect, movingSpotId, onMoveConfirm, onMoveCancelAndSelect, onWaypointDragEnd, onWaypointSelect, onInsertWaypoint, onSegmentDragEnd, drawMode, hitTolerance]);
+
+  // Pointer cancelled by the system (e.g. incoming call, gesture takeover) — drop all state, no click
+  const onPointerCancel = useCallback((e) => {
+    pointersRef.current.delete(e.pointerId);
+    try { containerRef.current?.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    pinchRef.current = null;
+    dragging.current = false;
+    hasMoved.current = false;
+    downTargetRef.current = null;
+    segmentDragRef.current = { active: false };
+    liveSegmentDragRef.current = null;
+    setLiveSegmentDrag(null);
+    waypointDragRef.current = { active: false, routeId: null, nodeIndex: null };
+    liveWaypointPosRef.current = null;
+    setLiveWaypointPos(null);
+  }, []);
 
   // ── Zoom ───────────────────────────────────────────────────────────────────
 
@@ -459,6 +592,8 @@ export default function MapCanvas({
   const pinSW    = PIN_STROKE    / scale;
   const pinFS    = PIN_FONT_SIZE / scale;
   const labelGap = PIN_LABEL_GAP / scale;
+  // Invisible hit-area — 44px diameter on touch (Apple HIG floor), pin-sized on mouse
+  const pinHitR  = (isCoarse ? 22 : PIN_RADIUS) / scale;
 
   const spotsById = useMemo(() => {
     const map = Object.fromEntries(spots.map(s => [s.spotId, s]));
@@ -471,10 +606,11 @@ export default function MapCanvas({
   return (
     <div
       ref={containerRef}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseUp}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onContextMenu={(e) => e.preventDefault()}
       style={{
         width: '100%',
         height: '100%',
@@ -483,6 +619,9 @@ export default function MapCanvas({
         backgroundColor: '#1a0112',
         position: 'relative',
         userSelect: 'none',
+        WebkitUserSelect: 'none',
+        touchAction: 'none',
+        WebkitTouchCallout: 'none',
       }}
     >
       <div
@@ -606,18 +745,27 @@ export default function MapCanvas({
                           style={{ pointerEvents: 'none' }}
                         />
                       )}
-                      <circle
-                        cx={c.cx} cy={c.cy}
-                        r={dotR}
-                        fill={route.colour}
-                        stroke="#f5d2c1"
-                        strokeWidth={1.5 / scale}
+                      <g
                         style={{ pointerEvents: 'auto', cursor: 'move' }}
-                        onMouseDown={(e) => {
+                        onPointerDown={(e) => {
+                          if (e.pointerType === 'mouse' && e.button !== 0) return;
                           e.stopPropagation();
+                          registerPointer(e);
+                          if (startPinchIfReady()) return;
                           waypointDragRef.current = { active: true, routeId: route.routeId, nodeIndex: i, startX: e.clientX, startY: e.clientY };
                         }}
-                      />
+                      >
+                        {isCoarse && (
+                          <circle cx={c.cx} cy={c.cy} r={16 / scale} fill="transparent" stroke="none" />
+                        )}
+                        <circle
+                          cx={c.cx} cy={c.cy}
+                          r={dotR}
+                          fill={route.colour}
+                          stroke="#f5d2c1"
+                          strokeWidth={1.5 / scale}
+                        />
+                      </g>
                     </g>
                   );
                 })}
@@ -690,10 +838,11 @@ export default function MapCanvas({
                   />
                 )}
 
+                {/* transparent hit-area keeps click behaviour consistent across pin styles */}
+                <circle cx={cx} cy={cy} r={pinHitR} fill="transparent" stroke="none" />
+
                 {spot.emoticon ? (
                   <>
-                    {/* transparent hit-area keeps click behaviour consistent */}
-                    <circle cx={cx} cy={cy} r={pinR} fill="transparent" stroke="none" />
                     <text
                       x={cx} y={cy}
                       textAnchor="middle"
