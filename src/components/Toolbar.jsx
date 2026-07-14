@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import bbhLogo from '../assets/bbh_logo.png';
 
-function ToolbarBtn({ onClick, active, disabled, title, children }) {
+function ToolbarBtn({ onClick, active, disabled, title, compact, children }) {
   const [hovered, setHovered] = useState(false);
   let bg, color;
   if (active) {
@@ -22,10 +22,11 @@ function ToolbarBtn({ onClick, active, disabled, title, children }) {
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         background: bg, border: active ? '1px solid rgba(245,210,193,0.4)' : '1px solid transparent',
-        borderRadius: 10, padding: '4px 12px',
+        borderRadius: 10, padding: compact ? '8px 10px' : '4px 12px',
         color, fontSize: '0.8rem', fontWeight: 600,
         cursor: disabled ? 'default' : 'pointer', outline: 'none',
         opacity: disabled ? 0.5 : 1,
+        flexShrink: 0,
       }}
     >
       {children}
@@ -103,7 +104,7 @@ function VenueSelect() {
   );
 }
 
-function LabelsToggle({ showLabels, onToggleLabels }) {
+function LabelsToggle({ showLabels, onToggleLabels, compact }) {
   const [hovered, setHovered] = useState(false);
   const active = showLabels;
 
@@ -132,12 +133,13 @@ function LabelsToggle({ showLabels, onToggleLabels }) {
         background: bg,
         border: 'none',
         borderRadius: 10,
-        padding: '4px 12px',
+        padding: compact ? '8px 10px' : '4px 12px',
         color,
         fontSize: '0.8rem',
         fontWeight: 600,
         cursor: 'pointer',
         outline: 'none',
+        flexShrink: 0,
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -154,10 +156,16 @@ function LabelsToggle({ showLabels, onToggleLabels }) {
           </>
         )}
       </svg>
-      Labels
+      {!compact && 'Labels'}
     </button>
   );
 }
+
+const routeIcon = (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+  </svg>
+);
 
 export default function Toolbar({
   showLabels = true,
@@ -168,29 +176,31 @@ export default function Toolbar({
   onFinishRoute,
   onCancelDraw,
   syncStatus = 'idle',
+  isMobile = false,
 }) {
+  const barHeight = isMobile ? 52 : 60;
   return (
     <header
       style={{
-        height: 60,
-        minHeight: 60,
+        height: barHeight,
+        minHeight: barHeight,
         backgroundColor: '#420424',
         display: 'flex',
         alignItems: 'center',
-        padding: '0 16px',
-        gap: 12,
+        padding: isMobile ? '0 10px' : '0 16px',
+        gap: isMobile ? 8 : 12,
         boxSizing: 'border-box',
         borderBottom: '1px solid rgba(245,210,193,0.1)',
         flexShrink: 0,
       }}
     >
-      {/* Left — logo + title */}
+      {/* Left — logo + title (logo alone carries the identity on mobile) */}
       <img
         src={bbhLogo}
         alt="BBH logo"
         style={{
-          width: 36,
-          height: 36,
+          width: isMobile ? 32 : 36,
+          height: isMobile ? 32 : 36,
           borderRadius: 6,
           background: '#ffffff',
           padding: 2,
@@ -198,15 +208,17 @@ export default function Toolbar({
           flexShrink: 0,
         }}
       />
-      <span style={{
-        fontSize: 20,
-        fontWeight: 600,
-        color: '#ffffff',
-        letterSpacing: '0.04em',
-        lineHeight: 1.2,
-      }}>
-        BBH Quest Map
-      </span>
+      {!isMobile && (
+        <span style={{
+          fontSize: 20,
+          fontWeight: 600,
+          color: '#ffffff',
+          letterSpacing: '0.04em',
+          lineHeight: 1.2,
+        }}>
+          BBH Quest Map
+        </span>
+      )}
 
       {/* Spacer */}
       <div style={{ flex: 1 }} />
@@ -214,34 +226,32 @@ export default function Toolbar({
       {/* Right — draw mode controls + venue + labels */}
       {drawMode ? (
         <>
-          <ToolbarBtn active onClick={onToggleDrawMode} title="Drawing route — click to exit">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
-            Drawing Route
+          <ToolbarBtn active compact={isMobile} onClick={onToggleDrawMode} title="Drawing route — click to exit">
+            {routeIcon}
+            {!isMobile && 'Drawing Route'}
           </ToolbarBtn>
           <ToolbarBtn
+            compact={isMobile}
             onClick={onFinishRoute}
             disabled={draftNodeCount < 2}
             title={draftNodeCount < 2 ? 'Add at least 2 nodes to finish' : 'Save this route'}
           >
-            Save Route
+            {isMobile ? 'Save' : 'Save Route'}
           </ToolbarBtn>
-          <ToolbarBtn onClick={onCancelDraw} title="Discard route and exit draw mode">
-            Cancel
+          <ToolbarBtn compact={isMobile} onClick={onCancelDraw} title="Discard route and exit draw mode">
+            {isMobile ? '✕' : 'Cancel'}
           </ToolbarBtn>
         </>
       ) : (
-        <ToolbarBtn onClick={onToggleDrawMode} title="Draw a new route">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-          </svg>
-          Draw Route
+        <ToolbarBtn compact={isMobile} onClick={onToggleDrawMode} title="Draw a new route">
+          {routeIcon}
+          {!isMobile && 'Draw Route'}
         </ToolbarBtn>
       )}
       <SyncDot status={syncStatus} />
-      <VenueSelect />
-      <LabelsToggle showLabels={showLabels} onToggleLabels={onToggleLabels} />
+      {/* Single venue for now — the dropdown returns on mobile when a second venue exists */}
+      {!isMobile && <VenueSelect />}
+      <LabelsToggle showLabels={showLabels} onToggleLabels={onToggleLabels} compact={isMobile} />
     </header>
   );
 }

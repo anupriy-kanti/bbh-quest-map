@@ -32,6 +32,13 @@ html, body, #root {
   background-color: #1a0112;
 }
 
+/* B06b — app root fills the visible viewport; dvh tracks the iOS Safari URL bar */
+.app-root {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* B06a — mobile panel overlay */
 .mobile-panel-overlay > * {
   width: 100% !important;

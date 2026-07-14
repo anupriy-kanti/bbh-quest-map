@@ -441,11 +441,10 @@ export default function App() {
 
   return (
     <div
+      className="app-root"
       style={{
         display: 'flex',
         flexDirection: 'column',
-        width: '100vw',
-        height: '100vh',
         overflow: 'hidden',
       }}
     >
@@ -458,6 +457,7 @@ export default function App() {
         onFinishRoute={handleFinishRouteRequest}
         onCancelDraw={handleCancelDraw}
         syncStatus={syncStatus}
+        isMobile={isMobile}
       />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
